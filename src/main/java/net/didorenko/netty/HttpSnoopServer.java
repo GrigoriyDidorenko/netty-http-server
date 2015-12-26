@@ -13,11 +13,10 @@
  * License for the specific language governing permissions and limitations
  * under the License.
  */
-package net.didorenko.helloworld;
+package net.didorenko.netty;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
@@ -31,7 +30,7 @@ import io.netty.handler.ssl.util.SelfSignedCertificate;
  * An HTTP server that sends back the content of the received HTTP request
  * in a pretty plaintext form.
  */
-public final class HttpHelloWorldServer {
+public final class HttpSnoopServer {
 
     static final boolean SSL = System.getProperty("ssl") != null;
     static final int PORT = Integer.parseInt(System.getProperty("port", SSL? "8443" : "8080"));
@@ -51,11 +50,10 @@ public final class HttpHelloWorldServer {
         EventLoopGroup workerGroup = new NioEventLoopGroup();
         try {
             ServerBootstrap b = new ServerBootstrap();
-            b.option(ChannelOption.SO_BACKLOG, 1024);
             b.group(bossGroup, workerGroup)
              .channel(NioServerSocketChannel.class)
              .handler(new LoggingHandler(LogLevel.INFO))
-             .childHandler(new HttpHelloWorldServerInitializer(sslCtx));
+             .childHandler(new HttpSnoopServerInitializer(sslCtx));
 
             Channel ch = b.bind(PORT).sync().channel();
 
