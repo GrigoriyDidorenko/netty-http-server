@@ -19,11 +19,16 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandler;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.group.ChannelGroup;
+import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.handler.codec.DecoderResult;
 import io.netty.handler.codec.http.*;
 import io.netty.util.CharsetUtil;
+import io.netty.util.concurrent.GlobalEventExecutor;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -35,7 +40,13 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 public class HttpSnoopServerHandler extends SimpleChannelInboundHandler<Object> {
 
-    private static final byte[] CONTENT = {'H', 'e', 'l', 'l', 'o', ' ', 'W', 'o', 'r', 'l', 'd'};
+    final ChannelGroup channels =
+            new DefaultChannelGroup(GlobalEventExecutor.INSTANCE);
+
+    private int counter;
+    private  HashMap<String, Integer> urlRedirectingNumber = new HashMap<>();
+    private static final byte[] DEFAULT = {'H', 'a', 'p', 'p', 'y', ' ', 'n', 'e', 'w', ' ', 'y', 'e', 'a', 'r', '!'};
+    private static final byte[] HELLO_WORLD = {'H', 'e', 'l', 'l', 'o', ' ', 'W', 'o', 'r', 'l', 'd'};
     private HttpRequest request;
     /**
      * Buffer that stores the response content
@@ -48,46 +59,19 @@ public class HttpSnoopServerHandler extends SimpleChannelInboundHandler<Object> 
     }
 
     @Override
+    public void channelActive(ChannelHandlerContext ctx) {
+        channels.add(ctx.channel());
+    }
+
+    @Override
     protected void channelRead0(ChannelHandlerContext ctx, Object msg) {
+        channelActive(ctx);
         if (msg instanceof HttpRequest) {
             HttpRequest request = this.request = (HttpRequest) msg;
 
             if (HttpHeaders.is100ContinueExpected(request)) {
                 send100Continue(ctx);
             }
-
-            buf.setLength(0);
-            buf.append("WELCOME TO THE WILD WILD WEB SERVER\r\n");
-            buf.append("===================================\r\n");
-
-            buf.append("VERSION: ").append(request.getProtocolVersion()).append("\r\n");
-            buf.append("HOSTNAME: ").append(HttpHeaders.getHost(request, "unknown")).append("\r\n");
-            buf.append("REQUEST_URI: ").append(request.getUri()).append("\r\n\r\n");
-
-            HttpHeaders headers = request.headers();
-            if (!headers.isEmpty()) {
-                for (Entry<String, String> h : headers) {
-                    String key = h.getKey();
-                    String value = h.getValue();
-                    buf.append("HEADER: ").append(key).append(" = ").append(value).append("\r\n");
-                }
-                buf.append("\r\n");
-            }
-
-            QueryStringDecoder queryStringDecoder = new QueryStringDecoder(request.getUri());
-            Map<String, List<String>> params = queryStringDecoder.parameters();
-            if (!params.isEmpty()) {
-                for (Entry<String, List<String>> p : params.entrySet()) {
-                    String key = p.getKey();
-                    List<String> vals = p.getValue();
-                    for (String val : vals) {
-                        buf.append("PARAM: ").append(key).append(" = ").append(val).append("\r\n");
-                    }
-                }
-                buf.append("\r\n");
-            }
-
-            appendDecoderResult(buf, request);
         }
 
         if (msg instanceof HttpContent) {
@@ -95,14 +79,13 @@ public class HttpSnoopServerHandler extends SimpleChannelInboundHandler<Object> 
 
             ByteBuf content = httpContent.content();
             if (content.isReadable()) {
-                buf.append("CONTENT: ");
+                buf.append("HELLO_WORLD: ");
                 buf.append(content.toString(CharsetUtil.UTF_8));
                 buf.append("\r\n");
                 appendDecoderResult(buf, request);
             }
 
             if (msg instanceof LastHttpContent) {
-                buf.append("END OF CONTENT\r\n");
 
                 LastHttpContent trailer = (LastHttpContent) msg;
                 if (!trailer.trailingHeaders().isEmpty()) {
@@ -138,15 +121,19 @@ public class HttpSnoopServerHandler extends SimpleChannelInboundHandler<Object> 
     private boolean writeResponse(HttpObject currentObj, ChannelHandlerContext ctx) {
         boolean keepAlive = HttpHeaders.isKeepAlive(request);
 
-
         QueryStringDecoder urlDecoder = new QueryStringDecoder(request.getUri());
 
 
-        switch (urlDecoder.uri()) {
-            case "/redirect": {
+            if(urlDecoder.path().equals("/redirect")){
+                String urlParam = urlDecoder.parameters().get("url").get(0);
                 FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, MOVED_PERMANENTLY);
-                response.headers().set(LOCATION, urlDecoder.parameters().get("url").get(0));
+                response.headers().set(LOCATION, urlParam);
                 response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
+
+                if (urlRedirectingNumber.containsKey(urlParam))
+                    urlRedirectingNumber.put(urlParam, urlRedirectingNumber.get(urlParam) + 1);
+                else
+                    urlRedirectingNumber.put(urlParam, 1);
 
                 if (!keepAlive) {
                     ctx.write(response).addListener(ChannelFutureListener.CLOSE);
@@ -154,12 +141,10 @@ public class HttpSnoopServerHandler extends SimpleChannelInboundHandler<Object> 
                     response.headers().set(CONNECTION, HttpHeaders.Values.KEEP_ALIVE);
                     ctx.write(response);
                 }
-                break;
             }
-
+        switch (urlDecoder.uri()) {
             case "/hello": {
-                System.out.println("i am in hello");
-                FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, OK, Unpooled.wrappedBuffer(CONTENT));
+                FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, OK, Unpooled.wrappedBuffer(HELLO_WORLD));
                 response.headers().set(CONTENT_TYPE, "text/plain");
                 response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
 
@@ -175,23 +160,20 @@ public class HttpSnoopServerHandler extends SimpleChannelInboundHandler<Object> 
             case "/status": {
                 break;
             }
+            default: {
+                FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, OK, Unpooled.wrappedBuffer(DEFAULT));
+                response.headers().set(CONTENT_TYPE, "text/plain");
+                response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
+
+                if (!keepAlive) {
+                    ctx.write(response).addListener(ChannelFutureListener.CLOSE);
+                } else {
+                    response.headers().set(CONNECTION, HttpHeaders.Values.KEEP_ALIVE);
+                    ctx.write(response);
+                }
+                break;
+            }
         }
-
-//        FullHttpResponse response = new DefaultFullHttpResponse(
-//                HTTP_1_1, currentObj.getDecoderResult().isSuccess() ? OK : BAD_REQUEST,
-//                Unpooled.copiedBuffer(buf.toString(), CharsetUtil.UTF_8));
-//
-//        response.headers().set(CONTENT_TYPE, "text/plain; charset=UTF-8");
-//
-//        if (keepAlive) {
-//            // Add 'Content-Length' header only for a keep-alive connection.
-//            response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
-//            // Add keep alive header as per:
-//            // - http://www.w3.org/Protocols/HTTP/1.1/draft-ietf-http-v11-spec-01.html#Connection
-//            response.headers().set(CONNECTION, HttpHeaders.Values.KEEP_ALIVE);
-//        }
-//        // Write the response.
-
         return keepAlive;
 
     }

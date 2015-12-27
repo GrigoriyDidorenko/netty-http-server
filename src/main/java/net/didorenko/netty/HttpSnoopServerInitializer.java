@@ -21,6 +21,7 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.HttpRequestDecoder;
 import io.netty.handler.codec.http.HttpResponseEncoder;
 import io.netty.handler.ssl.SslContext;
+import io.netty.handler.traffic.ChannelTrafficShapingHandler;
 
 public class HttpSnoopServerInitializer extends ChannelInitializer<SocketChannel> {
 
@@ -42,6 +43,8 @@ public class HttpSnoopServerInitializer extends ChannelInitializer<SocketChannel
         p.addLast(new HttpResponseEncoder());
         // Remove the following line if you don't want automatic content compression.
         //p.addLast(new HttpContentCompressor());
+        p.addLast(new ChannelTrafficShapingHandler(0, 0));
         p.addLast(new HttpSnoopServerHandler());
+        p.addLast(StatusHandler.getInstance());
     }
 }
