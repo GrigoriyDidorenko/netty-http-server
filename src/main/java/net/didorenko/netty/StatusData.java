@@ -1,3 +1,5 @@
+package net.didorenko.netty;
+
 import java.time.LocalDateTime;
 
 /**
