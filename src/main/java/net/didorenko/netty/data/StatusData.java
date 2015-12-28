@@ -1,4 +1,4 @@
-package net.didorenko.netty;
+package net.didorenko.netty.data;
 
 import java.time.LocalDateTime;
 
@@ -14,19 +14,13 @@ public class StatusData {
 
     private String ip;
     private String uri;
-    private LocalDateTime date;
+    private double date;
     private long sentBytes;
     private long receivedBytes;
     private double speed;
 
-    public StatusData(String ip, String uri, LocalDateTime date, long sentBytes, long receivedBytes, double speed) {
-        this.ip = ip;
-        this.uri = uri;
-        this.date = date;
-        this.sentBytes = sentBytes;
-        this.receivedBytes = receivedBytes;
-        this.speed = speed;
-    }
+    public StatusData(){}
+
 
     public String getIp() {
         return ip;
@@ -44,11 +38,11 @@ public class StatusData {
         this.uri = uri;
     }
 
-    public LocalDateTime getDate() {
+    public double getDate() {
         return date;
     }
 
-    public void setDate(LocalDateTime date) {
+    public void setDate(double date) {
         this.date = date;
     }
 
