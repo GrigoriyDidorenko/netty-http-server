@@ -11,6 +11,8 @@ import net.didorenko.netty.data.Data;
 import net.didorenko.netty.data.StatusData;
 
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static io.netty.handler.codec.http.HttpHeaders.Names.*;
 import static io.netty.handler.codec.http.HttpResponseStatus.*;
@@ -25,115 +27,83 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
  * @date: 27.12.2015
  */
 
-public class ServerHandler extends SimpleChannelInboundHandler<Object> {
+public class ServerHandler extends SimpleChannelInboundHandler {
 
     private HttpRequest request;
     private StatusData statusData = new StatusData();
 
 
     @Override
-    public void channelActive(ChannelHandlerContext ctx) {
-        //TODO
-        statusData.setSpeed(System.currentTimeMillis());
+    public void channelActive(ChannelHandlerContext ctx) throws Exception {
+        String ipAddr = ctx.channel().remoteAddress().toString().replaceAll(":[0-9]+","");
+        Data.getInstance().setBeginTimeAndIp(statusData, ipAddr);
         Data.getInstance().addQueryCounter();
         Data.getInstance().addActiveCounter();
-        Data.getInstance().addIpCounter(ctx.channel().remoteAddress().toString());
+        Data.getInstance().addIpCounter(ipAddr);
     }
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Object msg) {
 
-        if (msg instanceof HttpRequest) {
-            HttpRequest request = this.request = (HttpRequest) msg;
+        if(msg instanceof HttpRequest) {
+            request = (HttpRequest) msg;
 
-            if (HttpHeaders.is100ContinueExpected(request)) {
-                send100Continue(ctx);
-            }
+            statusData.setReceivedBytes(statusData.getSentBytes() + msg.toString().length());
+
+            QueryStringDecoder urlDecoder = new QueryStringDecoder(request.getUri());
+            statusData.setUri(request.getUri());
+
+
+            if (urlDecoder.path().equals("/redirect")) {
+                String urlParam = urlDecoder.parameters().get("url").get(0);
+
+
+                Pattern p = Pattern.compile("^(https?|ftp|file)://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]");
+                Matcher m = p.matcher(urlParam);
+
+                if (!m.matches())
+                    throw new RuntimeException("Incorrect url as GET parameter " + urlParam);
+
+                FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, MOVED_PERMANENTLY);
+                response.headers().set(LOCATION, urlParam);
+                response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
+                ctx.write(response).addListener(ChannelFutureListener.CLOSE);
+                Data.getInstance().addUrlNumberOfRedirects(urlParam);
+                statusData.setSentBytes(response.toString().length());
+            } else
+                switch (urlDecoder.uri()) {
+                    case "/hello": {
+                        FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, OK, Unpooled.copiedBuffer("Hello world!" +
+                                " I am going to do my best to apply for the vacation", CharsetUtil.UTF_8));
+                        response.headers().set(CONTENT_TYPE, "text/plain");
+                        response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
+
+                        ctx.executor().schedule(() -> ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE), 10, TimeUnit.SECONDS);
+                        statusData.setSentBytes(response.content().readableBytes());
+                    }
+                    break;
+
+                    case "/status": {
+                        FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, OK,
+                                Unpooled.copiedBuffer(Data.getInstance().statusResponse(), CharsetUtil.UTF_8));
+                        response.headers().set(CONTENT_TYPE, "html");
+                        response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
+                        ctx.write(response).addListener(ChannelFutureListener.CLOSE);
+                        statusData.setSentBytes(response.content().readableBytes());
+                    }
+                    break;
+                    default: {
+                        FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, NOT_FOUND, Unpooled.copiedBuffer("Page not found. However, Happy New Year and Merry Christmas!", CharsetUtil.UTF_8));
+                        response.headers().set(CONTENT_TYPE, "text/plain");
+                        response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
+                        ctx.write(response).addListener(ChannelFutureListener.CLOSE);
+                        //TODO check
+                        statusData.setSentBytes(response.content().readableBytes());
+                    }
+                    break;
+                }
         }
-
-        if (msg instanceof HttpContent) {
-            if (!writeResponse(ctx)) {
-                // If keep-alive is off, close the connection once the content is fully written.
-                ctx.writeAndFlush(Unpooled.EMPTY_BUFFER).addListener(ChannelFutureListener.CLOSE);
-            }
-        }
-    }
-
-    private boolean writeResponse(ChannelHandlerContext ctx) {
-
-        boolean keepAlive = HttpHeaders.isKeepAlive(request);
-
-        QueryStringDecoder urlDecoder = new QueryStringDecoder(request.getUri());
-        //TODO
-        statusData.setUri(request.getUri());
-
-        // Logic
-
-        if (urlDecoder.path().equals("/redirect")) {
-            String urlParam = urlDecoder.parameters().get("url").get(0);
-
-            // Regex pattern from habra
-
-            if (!urlParam.contains("~^(?:(?:https?|ftp|telnet)" +
-                    "://(?:[a-z0-9_-]{1,32}(?::[a-z0-9_-]{1,32})?@)?)?(?:(?:[a-z0-9-]{1,128}\\.)+" +
-                    "(?:ru|su|com|net|org|mil|edu|arpa|gov|biz|info|aero|inc|name|[a-z]{2})|(?!0)(?:(?!0[^.]|255)[0-9]{1,3}\\.)" +
-                    "{3}(?!0|255)[0-9]{1,3})(?:/[a-z0-9.,_@%&?+=\\~/-]*)?(?:#[^ '\\\"&]*)?$~i"))
-                throw new RuntimeException("Incorrect url as GET parameter " + urlParam);
-            FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, MOVED_PERMANENTLY);
-            response.headers().set(LOCATION, urlParam);
-            response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
-            ctx.write(response).addListener(ChannelFutureListener.CLOSE);
-            Data.getInstance().addUrlNumberOfRedirects(urlParam);
-        } else
-            switch (urlDecoder.uri()) {
-                case "/hello": {
-                    FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, OK, Unpooled.copiedBuffer("Hello world!" +
-                            " I am going to do my best to apply for the vacation", CharsetUtil.UTF_8));
-                    response.headers().set(CONTENT_TYPE, "text/plain");
-                    response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
-
-                    if (!keepAlive) {
-                        ctx.write(response).addListener(ChannelFutureListener.CLOSE);
-                    } else {
-                        response.headers().set(CONNECTION, HttpHeaders.Values.KEEP_ALIVE);
-                        ctx.executor().schedule(() -> ctx.writeAndFlush(response), 10, TimeUnit.SECONDS);
-                    }
-                    break;
-                }
-
-                case "/status": {
-                    FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, OK,
-                            Unpooled.copiedBuffer(Data.getInstance().statusResponse(), CharsetUtil.UTF_8));
-                    response.headers().set(CONTENT_TYPE, "html");
-                    response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
-                    if (!keepAlive) {
-                        ctx.write(response).addListener(ChannelFutureListener.CLOSE);
-                    } else {
-                        response.headers().set(CONNECTION, HttpHeaders.Values.KEEP_ALIVE);
-                        ctx.write(response);
-                    }
-                    break;
-                }
-                default: {
-                    FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, NOT_FOUND, Unpooled.copiedBuffer("Page not found. However, Happy New Year!", CharsetUtil.UTF_8));
-                    response.headers().set(CONTENT_TYPE, "text/plain");
-                    response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
-                    if (!keepAlive) {
-                        ctx.write(response).addListener(ChannelFutureListener.CLOSE);
-                    } else {
-                        response.headers().set(CONNECTION, HttpHeaders.Values.KEEP_ALIVE);
-                        ctx.write(response);
-                    }
-                    break;
-                }
-            }
-        return keepAlive;
-    }
-
-    private static void send100Continue(ChannelHandlerContext ctx) {
-        FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, CONTINUE);
-        ctx.write(response);
-    }
+}
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
@@ -143,8 +113,7 @@ public class ServerHandler extends SimpleChannelInboundHandler<Object> {
 
     @Override
     public void channelReadComplete(ChannelHandlerContext ctx) {
-        //TODO
-        Data.getInstance().proccessStatusData(statusData, ctx.channel().remoteAddress().toString());
+        Data.getInstance().processStatusData(statusData);
         Data.getInstance().removeActiveCounter();
         ctx.flush();
     }

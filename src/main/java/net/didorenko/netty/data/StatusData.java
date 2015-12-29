@@ -14,7 +14,7 @@ public class StatusData {
 
     private String ip;
     private String uri;
-    private double date;
+    private LocalDateTime date;
     private long sentBytes;
     private long receivedBytes;
     private double speed;
@@ -38,11 +38,11 @@ public class StatusData {
         this.uri = uri;
     }
 
-    public double getDate() {
+    public LocalDateTime getDate() {
         return date;
     }
 
-    public void setDate(double date) {
+    public void setDate(LocalDateTime date) {
         this.date = date;
     }
 
